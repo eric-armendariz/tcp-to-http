@@ -1,6 +1,7 @@
 package request
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"strings"
@@ -21,6 +22,13 @@ type RequestLine struct {
 }
 
 type parserState int
+
+const (
+	SEPARATOR = "\r\n"
+
+	stateInitialized = 0
+	stateDone        = 1
+)
 
 var (
 	cmds = map[string]bool{
@@ -70,13 +78,7 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 }
 
 func parseRequestLine(data []byte) (*RequestLine, int, error) {
-	endIdx := -1
-	for i := 0; i < len(data)-1; i++ {
-		if data[i] == '\r' && data[i+1] == '\n' {
-			endIdx = i
-			break
-		}
-	}
+	endIdx := bytes.Index(data, []byte(SEPARATOR))
 	if endIdx == -1 {
 		return nil, 0, nil
 	}
@@ -103,23 +105,27 @@ func parseRequestLine(data []byte) (*RequestLine, int, error) {
 		RequestTarget: requestLine[1],
 		HttpVersion:   strings.TrimPrefix(requestLine[2], "HTTP/"),
 	}
-	return reqLine, endIdx + 2, nil
+	return reqLine, endIdx + len(SEPARATOR), nil
 }
 
 func (r *Request) parse(data []byte) (int, error) {
-	if r.state == 1 {
+	switch r.state {
+	case stateDone:
 		return 0, fmt.Errorf("request already parsed")
+	case stateInitialized:
+		reqLine, bytesRead, err := parseRequestLine(data)
+		if err != nil {
+			return 0, err
+		}
+		if bytesRead == 0 {
+			return 0, nil
+		}
+		r.RequestLine = *reqLine
+		r.state = 1
+		return bytesRead, nil
+	default:
+		return 0, fmt.Errorf("invalid state: %d", r.state)
 	}
-	reqLine, bytesRead, err := parseRequestLine(data)
-	if err != nil {
-		return 0, err
-	}
-	if bytesRead == 0 {
-		return 0, nil
-	}
-	r.RequestLine = *reqLine
-	r.state = 1
-	return bytesRead, nil
 }
 
 func isAllUppercase(s string) bool {
