@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"http/internal/headers"
 	"io"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -29,7 +30,8 @@ const (
 
 	stateInitialized    = 0
 	stateParsingHeaders = 1
-	stateDone           = 2
+	stateParsingBody    = 2
+	stateDone           = 3
 )
 
 var (
@@ -69,6 +71,9 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 
 		n, err := reader.Read(buf[readIdx:])
 		if err == io.EOF {
+			if req.state == stateParsingBody {
+				return nil, fmt.Errorf("unexpected EOF while reading body")
+			}
 			req.state = stateDone
 			break
 		}
@@ -135,8 +140,30 @@ func (r *Request) parse(data []byte) (int, error) {
 		if !done {
 			return bytesRead, nil
 		}
-		r.state = stateDone
+		r.state = stateParsingBody
 		return bytesRead, nil
+	case stateParsingBody:
+		sizeVal, ok := r.Headers.Get("content-length")
+		if !ok {
+			r.state = stateDone
+			return 0, nil
+		}
+		contentSize, err := strconv.Atoi(sizeVal)
+		if err != nil {
+			return 0, fmt.Errorf("invalid content-length header: %s", sizeVal)
+		}
+		// Need more data to parse
+		if len(data) < contentSize {
+			return 0, nil
+		}
+		// Data size does not match content-length
+		if len(data) > contentSize {
+			return 0, fmt.Errorf("invalid content-length header: %d", contentSize)
+		}
+		r.Body = make([]byte, contentSize)
+		copy(r.Body, data)
+		r.state = stateDone
+		return contentSize, nil
 	default:
 		return 0, fmt.Errorf("invalid state: %d", r.state)
 	}
