@@ -3,6 +3,7 @@ package request
 import (
 	"bytes"
 	"fmt"
+	"http/internal/headers"
 	"io"
 	"strings"
 	"unicode"
@@ -10,7 +11,7 @@ import (
 
 type Request struct {
 	RequestLine RequestLine
-	Headers     map[string]string
+	Headers     headers.Headers
 	Body        []byte
 	state       parserState
 }
@@ -26,8 +27,9 @@ type parserState int
 const (
 	SEPARATOR = "\r\n"
 
-	stateInitialized = 0
-	stateDone        = 1
+	stateInitialized    = 0
+	stateParsingHeaders = 1
+	stateDone           = 2
 )
 
 var (
@@ -41,28 +43,13 @@ var (
 
 func RequestFromReader(reader io.Reader) (*Request, error) {
 	req := &Request{
-		state: 0,
+		state:   0,
+		Headers: headers.NewHeaders(),
 	}
 
 	buf := make([]byte, 8)
 	readIdx := 0
-	for req.state != 1 {
-		if readIdx >= len(buf) {
-			newBuf := make([]byte, len(buf)*2)
-			copy(newBuf, buf[:readIdx])
-			buf = newBuf
-		}
-
-		n, err := reader.Read(buf[readIdx:])
-		if err == io.EOF {
-			req.state = 1
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-		readIdx += n
-
+	for req.state != stateDone {
 		consumed, err := req.parse(buf[:readIdx])
 		if err != nil {
 			return nil, err
@@ -71,7 +58,24 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		if consumed > 0 {
 			copy(buf, buf[consumed:])
 			readIdx -= consumed
+			continue
 		}
+
+		if readIdx >= len(buf) {
+			newBuf := make([]byte, len(buf)*2)
+			copy(newBuf, buf[:readIdx])
+			buf = newBuf
+		}
+
+		n, err := reader.Read(buf[readIdx:])
+		if err == io.EOF {
+			req.state = stateDone
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		readIdx += n
 	}
 
 	return req, nil
@@ -121,7 +125,17 @@ func (r *Request) parse(data []byte) (int, error) {
 			return 0, nil
 		}
 		r.RequestLine = *reqLine
-		r.state = 1
+		r.state = stateParsingHeaders
+		return bytesRead, nil
+	case stateParsingHeaders:
+		bytesRead, done, err := r.Headers.Parse(data)
+		if err != nil {
+			return 0, err
+		}
+		if !done {
+			return bytesRead, nil
+		}
+		r.state = stateDone
 		return bytesRead, nil
 	default:
 		return 0, fmt.Errorf("invalid state: %d", r.state)
