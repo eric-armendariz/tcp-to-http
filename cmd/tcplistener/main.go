@@ -34,5 +34,6 @@ func main() {
 		for k, v := range requestLine.Headers {
 			fmt.Printf("%s: %s\n", k, v)
 		}
+		fmt.Printf("Body:\n%s\n", string(requestLine.Body))
 	}
 }
