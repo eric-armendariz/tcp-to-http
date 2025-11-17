@@ -63,6 +63,10 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 			continue
 		}
 
+		if req.state == stateDone {
+			break
+		}
+
 		if readIdx >= len(buf) {
 			newBuf := make([]byte, len(buf)*2)
 			copy(newBuf, buf[:readIdx])
@@ -151,6 +155,12 @@ func (r *Request) parse(data []byte) (int, error) {
 		contentSize, err := strconv.Atoi(sizeVal)
 		if err != nil {
 			return 0, fmt.Errorf("invalid content-length header: %s", sizeVal)
+		}
+
+		if contentSize == 0 {
+			r.Body = []byte{}
+			r.state = stateDone
+			return 0, nil
 		}
 		// Need more data to parse
 		if len(data) < contentSize {
