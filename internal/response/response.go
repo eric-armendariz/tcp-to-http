@@ -7,29 +7,47 @@ import (
 )
 
 type StatusCode int
+type writerState int
+
+type Writer struct {
+	W     io.Writer
+	state writerState
+}
+
+func NewWriter(w io.Writer) *Writer {
+	return &Writer{W: w, state: stateInitial}
+}
 
 const (
 	StatusCode200 StatusCode = 200
 	StatusCode400 StatusCode = 400
 	StatusCode500 StatusCode = 500
+
+	stateInitial writerState = iota
+	stateStatusWritten
+	stateHeadersWritten
+	stateBodyWritten
 )
 
-func WriteStatusLine(w io.Writer, statusCode StatusCode) error {
+func (w *Writer) WriteStatusLine(statusCode StatusCode) error {
+	if w.state != stateInitial {
+		return fmt.Errorf("writer not in proper state")
+	}
+	w.state = stateStatusWritten
 	switch statusCode {
 	case StatusCode200:
-		_, err := w.Write([]byte("HTTP/1.1 200 OK\r\n"))
+		_, err := w.W.Write([]byte("HTTP/1.1 200 OK\r\n"))
 		return err
 	case StatusCode400:
-		_, err := w.Write([]byte("HTTP/1.1 400 Bad Request\r\n"))
+		_, err := w.W.Write([]byte("HTTP/1.1 400 Bad Request\r\n"))
 		return err
 	case StatusCode500:
-		_, err := w.Write([]byte("HTTP/1.1 500 Internal Server Error\r\n"))
+		_, err := w.W.Write([]byte("HTTP/1.1 500 Internal Server Error\r\n"))
 		return err
 	default:
 		msg := fmt.Sprintf("HTTP/1.1 %d\r\n", statusCode)
-		_, err := w.Write([]byte(msg))
+		_, err := w.W.Write([]byte(msg))
 		return err
-
 	}
 }
 
@@ -41,13 +59,26 @@ func GetDefaultHeaders(contentLen int) headers.Headers {
 	return h
 }
 
-func WriteHeaders(w io.Writer, h headers.Headers) error {
+func (w *Writer) WriteHeaders(h headers.Headers) error {
+	if w.state != stateStatusWritten {
+		return fmt.Errorf("writer not in proper state")
+	}
 	for k, v := range h {
-		_, err := w.Write([]byte(fmt.Sprintf("%s: %s\r\n", k, v)))
+		_, err := w.W.Write([]byte(fmt.Sprintf("%s: %s\r\n", k, v)))
 		if err != nil {
 			return err
 		}
 	}
-	_, err := w.Write([]byte("\r\n"))
+	_, err := w.W.Write([]byte("\r\n"))
+	w.state = stateHeadersWritten
 	return err
+}
+
+func (w *Writer) WriteBody(p []byte) (int, error) {
+	if w.state != stateHeadersWritten {
+		return 0, fmt.Errorf("writer not in proper state")
+	}
+	n, err := w.W.Write(p)
+	w.state = stateBodyWritten
+	return n, err
 }

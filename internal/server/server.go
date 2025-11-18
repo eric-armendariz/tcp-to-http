@@ -1,11 +1,9 @@
 package server
 
 import (
-	"bytes"
 	"fmt"
 	"http/internal/request"
 	"http/internal/response"
-	"io"
 	"net"
 	"sync/atomic"
 )
@@ -22,7 +20,7 @@ type HandlerError struct {
 	Message    string
 }
 
-type Handler func(w io.Writer, req *request.Request) *HandlerError
+type Handler func(w *response.Writer, req *request.Request)
 
 func Serve(port int, handler Handler) (*Server, error) {
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
@@ -62,41 +60,13 @@ func (s *Server) listen() {
 func (s *Server) handle(conn net.Conn) {
 	defer conn.Close()
 
-	request, err := request.RequestFromReader(conn)
+	req, err := request.RequestFromReader(conn)
 	if err != nil {
-		hErr := &HandlerError{
-			StatusCode: response.StatusCode500,
-			Message:    "Internal Server Error",
-		}
-		hErr.writeHandlerError(conn)
+		fmt.Printf("Error reading request: %v\n", err)
 		return
 	}
-	fmt.Println("read request")
 
-	buf := bytes.NewBuffer([]byte{})
-	hErr := s.handler(buf, request)
-	if hErr != nil {
-		hErr.writeHandlerError(conn)
-		return
-	}
-	b := buf.Bytes()
-	response.WriteStatusLine(conn, response.StatusCode200)
-	headers := response.GetDefaultHeaders(len(b))
-	response.WriteHeaders(conn, headers)
-	conn.Write(b)
+	w := response.NewWriter(conn)
+	s.handler(w, req)
 	return
-}
-
-func (h *HandlerError) writeHandlerError(w io.Writer) error {
-	err := response.WriteStatusLine(w, h.StatusCode)
-	if err != nil {
-		return err
-	}
-	headers := response.GetDefaultHeaders(len(h.Message))
-	err = response.WriteHeaders(w, headers)
-	if err != nil {
-		return err
-	}
-	_, err = w.Write([]byte(h.Message))
-	return err
 }
