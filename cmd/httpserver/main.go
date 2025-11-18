@@ -20,6 +20,7 @@ import (
 const (
 	port    = 42069
 	httpbin = "/httpbin/"
+	video   = "/video"
 )
 
 const (
@@ -71,6 +72,9 @@ func main() {
 func handler(w *response.Writer, req *request.Request) {
 	if strings.HasPrefix(req.RequestLine.RequestTarget, httpbin) {
 		handleHTTPBin(w, req)
+		return
+	} else if strings.HasPrefix(req.RequestLine.RequestTarget, video) {
+		handleVideo(w)
 		return
 	}
 
@@ -145,4 +149,35 @@ func handleHTTPBin(w *response.Writer, req *request.Request) {
 		w.WriteChunkedBody(encodedBytes)
 	}
 	w.WriteChunkedBodyDone()
+}
+
+func handleVideo(w *response.Writer) {
+	videoData, err := os.ReadFile("assets/vim.mp4")
+	if err != nil {
+		log.Printf("Error reading video file: %v\n", err)
+		w.WriteStatusLine(response.StatusCode500)
+		h := headers.NewHeaders()
+		h["content-type"] = "text/plain"
+		h["connection"] = "close"
+		errMsg := "Failed to read video file"
+		h["content-length"] = fmt.Sprintf("%d", len(errMsg))
+		w.WriteHeaders(h)
+		w.WriteBody([]byte(errMsg))
+		return
+	}
+
+	fmt.Printf("Serving video file, size: %d bytes\n", len(videoData))
+
+	if err := w.WriteStatusLine(response.StatusCode200); err != nil {
+		log.Printf("Error writing status line: %v\n", err)
+		return
+	}
+
+	h := headers.NewHeaders()
+	h["content-type"] = "video/mp4"
+	h["connection"] = "close"
+	h["content-length"] = fmt.Sprintf("%d", len(videoData))
+	w.WriteHeaders(h)
+	w.WriteBody(videoData)
+	log.Println("Video served successfully")
 }
