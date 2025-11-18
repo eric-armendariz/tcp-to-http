@@ -1,10 +1,14 @@
 package server
 
 import (
+	"bytes"
 	"fmt"
+	"http/internal/headers"
 	"http/internal/request"
 	"http/internal/response"
 	"net"
+	"net/http"
+	"strings"
 	"sync/atomic"
 )
 
@@ -21,6 +25,8 @@ type HandlerError struct {
 }
 
 type Handler func(w *response.Writer, req *request.Request)
+
+const httpbin = "/httpbin/"
 
 func Serve(port int, handler Handler) (*Server, error) {
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
@@ -67,6 +73,44 @@ func (s *Server) handle(conn net.Conn) {
 	}
 
 	w := response.NewWriter(conn)
+	// Proxy handler for httpbin requests.
+	if strings.HasPrefix(req.RequestLine.RequestTarget, httpbin) {
+		s.handleHTTPBin(w, req)
+		return
+	}
 	s.handler(w, req)
 	return
+}
+
+func (s *Server) handleHTTPBin(w *response.Writer, req *request.Request) {
+	targetSuffix := strings.TrimPrefix(req.RequestLine.RequestTarget, httpbin)
+	targetURL := fmt.Sprintf("https://httpbin.org/%s", targetSuffix)
+	resp, err := http.Get(targetURL)
+	if err != nil {
+		fmt.Printf("Error making HTTP request: %v\n", err)
+		w.WriteStatusLine(response.StatusCode500)
+		w.WriteHeaders(response.GetDefaultHeaders(0))
+		return
+	}
+	defer resp.Body.Close()
+	w.WriteStatusLine(response.StatusCode200)
+	h := headers.Headers{
+		"content-type":      "text/plain",
+		"connection":        "close",
+		"transfer-encoding": "chunked",
+	}
+	w.WriteHeaders(h)
+	buf := make([]byte, 1024)
+	for {
+		n, err := resp.Body.Read(buf)
+		fmt.Printf("Read %d bytes from response body\n", n)
+		if err != nil {
+			break
+		}
+		var b bytes.Buffer
+		fmt.Fprintf(&b, "%x\r\n%s\r\n", n, string(buf[:n]))
+		encodedBytes := b.Bytes()
+		w.WriteChunkedBody(encodedBytes)
+	}
+	w.WriteChunkedBodyDone()
 }

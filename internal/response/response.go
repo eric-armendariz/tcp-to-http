@@ -1,9 +1,11 @@
 package response
 
 import (
+	"bytes"
 	"fmt"
 	"http/internal/headers"
 	"io"
+	"strconv"
 )
 
 type StatusCode int
@@ -81,4 +83,37 @@ func (w *Writer) WriteBody(p []byte) (int, error) {
 	n, err := w.W.Write(p)
 	w.state = stateBodyWritten
 	return n, err
+}
+
+func (w *Writer) WriteChunkedBody(p []byte) (int, error) {
+	if w.state != stateHeadersWritten {
+		return 0, fmt.Errorf("writer not in proper state")
+	}
+
+	endIdx := bytes.Index(p, []byte(headers.SEPARATOR))
+	if endIdx == -1 {
+		return 0, fmt.Errorf("invalid chunk")
+	}
+	hexStr := string(p[:endIdx])
+	lineSize, err := strconv.ParseInt(hexStr, 16, 64)
+	if err != nil {
+		fmt.Println("Error converting hexadecimal to integer:", err)
+		return 0, err
+	}
+
+	idx := endIdx + len(headers.SEPARATOR)
+	n, err := w.W.Write(p[idx : idx+int(lineSize)])
+	if err != nil {
+		return 0, err
+	}
+	if n != int(lineSize) {
+		return 0, fmt.Errorf("short write")
+	}
+
+	return n, nil
+}
+
+func (w *Writer) WriteChunkedBodyDone() (int, error) {
+	w.state = stateBodyWritten
+	return 0, nil
 }
